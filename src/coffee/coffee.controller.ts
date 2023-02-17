@@ -3,12 +3,14 @@ import {
   Controller,
   Delete,
   Get,
-  HttpCode,
-  HttpStatus,
   Param,
+  ParseIntPipe,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
+import { Public } from 'src/common/decorators/public.decorator';
+import { PaginationQueryDto } from 'src/common/dto/pagination-query.dto';
 import { CoffeeService } from './coffee.service';
 import { CreateCoffeeDto } from './dto/create-coffee.dto';
 import { UpdateCoffeeDto } from './dto/update-coffee.dto';
@@ -17,18 +19,20 @@ import { UpdateCoffeeDto } from './dto/update-coffee.dto';
 export class CoffeeController {
   constructor(private readonly coffeeService: CoffeeService) {}
 
+  @Public()
   @Get()
-  findAll() {
-    return this.coffeeService.findAll();
+  async findAll(@Query() paginationQuery: PaginationQueryDto) {
+    // await new Promise((res) => setTimeout(res, 5000));
+    return this.coffeeService.findAll(paginationQuery);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseIntPipe) id: string) {
+    console.log(id);
     return this.coffeeService.findOne(id);
   }
 
   @Post()
-  @HttpCode(HttpStatus.GONE)
   create(@Body() createCoffeeDto: CreateCoffeeDto) {
     return this.coffeeService.create(createCoffeeDto);
   }

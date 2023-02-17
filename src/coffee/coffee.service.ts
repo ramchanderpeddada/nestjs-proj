@@ -1,43 +1,113 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { PaginationQueryDto } from 'src/common/dto/pagination-query.dto';
 import { Coffee } from 'src/entities/coffee.entity';
+import { Flavor } from 'src/entities/flavor.entity';
+import { Event } from 'src/events/event.entity';
+import { DataSource, Repository } from 'typeorm';
+import { CreateCoffeeDto } from './dto/create-coffee.dto';
+import { UpdateCoffeeDto } from './dto/update-coffee.dto';
 
 @Injectable()
 export class CoffeeService {
-  private coffees: Coffee[] = [
-    {
-      id: 1,
-      name: 'Shipwerek Rost',
-      brand: 'Buddy Bew',
-      flavors: ['chocolate', 'vanila', 'mocha'],
-    },
-  ];
+  constructor(
+    @InjectRepository(Coffee) private readonly coffeeRepo: Repository<Coffee>,
+    @InjectRepository(Flavor) private readonly flavorRepo: Repository<Flavor>,
+    private readonly dataSrc: DataSource,
+  ) {}
 
-  findAll() {
-    return this.coffees;
+  findAll(paginationQuery: PaginationQueryDto) {
+    const { limit, offset } = paginationQuery;
+    return this.coffeeRepo.find({
+      relations: {
+        flavors: true,
+      },
+      skip: offset,
+      take: limit,
+    });
   }
 
-  findOne(id: string) {
-    const prodcuct = this.coffees.find((item) => item.id === +id);
-    if (!prodcuct) {
-      throw new HttpException(`Coffee ${id} not found`, HttpStatus.NOT_FOUND);
+  async findOne(id: string) {
+    const coffee = this.coffeeRepo.findOne({
+      where: {
+        id: +id,
+      },
+      relations: {
+        flavors: true,
+      },
+    });
+    if (!coffee) {
+      throw new NotFoundException(`Coffee ${id} not found`);
     }
-    return prodcuct;
+    return coffee;
   }
 
-  create(createCoffeeDto: any) {
-    this.coffees.push(createCoffeeDto);
+  async create(createCoffeeDto: CreateCoffeeDto) {
+    const flavors = await Promise.all(
+      createCoffeeDto.flavors.map((name) => this.preloadFlavorByName(name)),
+    );
+    const coffee = this.coffeeRepo.create({
+      ...createCoffeeDto,
+      flavors,
+    });
+    return this.coffeeRepo.save(coffee);
+  }
+  //create functionality??
+
+  async update(id: string, updateCoffeeDto: UpdateCoffeeDto) {
+    const flavors =
+      updateCoffeeDto.flavors &&
+      (await Promise.all(
+        updateCoffeeDto.flavors.map((name) => this.preloadFlavorByName(name)),
+      ));
+
+    const coffee = await this.coffeeRepo.preload({
+      id: +id,
+      ...updateCoffeeDto,
+      flavors,
+    });
+    if (!coffee) {
+      throw new NotFoundException(`Coffee ${id} not found`);
+    }
+    return this.coffeeRepo.save(coffee);
+  }
+  //update functionality ??
+  async delete(id: string) {
+    const coffee = await this.findOne(id);
+    return this.coffeeRepo.remove(coffee);
   }
 
-  update(id: string, updateCoffeeDto: any) {
-    const existing = this.findOne(id);
-    // if (existing) {
-    // }
-  }
+  async recommendCoffee(coffee: Coffee) {
+    const queryRunner = this.dataSrc.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-  delete(id: string) {
-    const index = this.coffees.findIndex((item) => item.id === +id);
-    if (index >= 0) {
-      this.coffees.splice(index, 1);
+    try {
+      coffee.recommendations++;
+
+      const recommendEvent = new Event();
+      recommendEvent.name = 'recommend_coffee';
+      recommendEvent.type = 'coffee';
+      recommendEvent.payload = { coffeeId: coffee.id };
+
+      await queryRunner.manager.save(coffee);
+      await queryRunner.manager.save(recommendEvent);
+
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+    } finally {
+      await queryRunner.release();
     }
   }
+  //uses?
+
+  private async preloadFlavorByName(name: string): Promise<Flavor> {
+    const existingFlavor = await this.flavorRepo.findOne({ where: { name } });
+    if (existingFlavor) {
+      return existingFlavor;
+    }
+    return this.flavorRepo.create({ name });
+  }
+  //why?
 }
